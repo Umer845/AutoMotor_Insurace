@@ -3,6 +3,8 @@ import psycopg2
 import pandas as pd
 from datetime import datetime
 import joblib
+import qa
+import dashboard
 
 # ✅ Load ML Models
 risk_model = joblib.load("risk_model.pkl")
@@ -35,6 +37,10 @@ def run_app():
         st.session_state['active_page'] = "Risk Profile"
     if st.sidebar.button("Premium Calculation"):
         st.session_state['active_page'] = "Premium Calculation"
+    if st.sidebar.button("Dashboard"):
+       st.session_state['active_page'] = "Dashboard"
+    if st.sidebar.button("Question Answer"):
+        st.session_state['active_page'] = "Question Answer"
 
     # ================================
     # 🚩 Upload Page
@@ -42,8 +48,7 @@ def run_app():
     if st.session_state['active_page'] == "Upload File":
         st.subheader("Upload Vehicle Data")
 
-        file_type = st.radio("Select file type", ["Excel (.xlsx)"])
-        uploaded_file = st.file_uploader("Upload File", type=["xlsx"])
+        uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
 
         if uploaded_file is not None:
             df = pd.read_excel(uploaded_file)
@@ -88,40 +93,44 @@ def run_app():
         if st.button("Calculate Risk"):
             current_year = datetime.now().year
 
-            if model_year < current_year - 5:
-                st.warning(f"⚠️ Vehicle too old. Enter model year >= {current_year - 5}.")
+            # ✅ Check: If older than 5 years — do NOT calculate
+            if model_year < (current_year - 5):
+                st.warning(f"⚠️ Vehicle too old. Must be {current_year - 5} or newer.")
             else:
-                if model_year == current_year + 1:
-                    # 2025: Use last 4 years data
+                if model_year == (current_year + 1):  # If 2025
                     cur.execute("""
-                        SELECT AVG(no_of_claims)::FLOAT, AVG(vehicle_capacity)::FLOAT, AVG(suminsured)::FLOAT
+                        SELECT AVG(no_of_claims)::FLOAT, AVG(vehicle_capacity)::FLOAT
                         FROM vehicle_inspection
                         WHERE upper(make_name) = %s AND upper(sub_make_name) = %s
                         AND model_year BETWEEN %s AND %s
-                        AND no_of_claims > 0
                     """, (make_name.upper(), sub_make_name.upper(), current_year - 4, current_year - 1))
+                    used_year = current_year  # Input to ML
                 else:
                     cur.execute("""
-                        SELECT AVG(no_of_claims)::FLOAT, AVG(vehicle_capacity)::FLOAT, AVG(suminsured)::FLOAT
+                        SELECT AVG(no_of_claims)::FLOAT, AVG(vehicle_capacity)::FLOAT
                         FROM vehicle_inspection
                         WHERE upper(make_name) = %s AND upper(sub_make_name) = %s
-                        AND model_year = %s AND no_of_claims > 0
-                    """, (make_name.upper(), sub_make_name.upper(), model_year))
+                        AND model_year BETWEEN %s AND %s
+                    """, (make_name.upper(), sub_make_name.upper(), model_year - 3, model_year))
+                    used_year = model_year
 
                 row = cur.fetchone()
                 if row and all(v is not None for v in row):
-                    avg_claims, avg_capacity, avg_suminsured = row
-                    features = [[model_year, avg_claims, avg_capacity, avg_suminsured, driver_age]]
-                    risk_level_numeric = int(risk_model.predict(features)[0])
-                    risk_map = ["Low", "Low to Moderate", "Moderate to High", "High"]
-                    risk_level = risk_map[risk_level_numeric]
+                    avg_claims, avg_capacity = row
 
-                    st.info(f"""
-                        ✅ **Risk:** {risk_level}
-                        Claims: {avg_claims:.2f}
-                        Capacity: {avg_capacity:.2f}
-                        Suminsured: {avg_suminsured:.2f}
-                    """)
+                    features = [[used_year, avg_claims, avg_capacity, driver_age]]
+                    risk_numeric = int(risk_model.predict(features)[0])
+
+                    risk_map = ["Low", "Low to Moderate", "Moderate to High", "High"]
+                    risk_level = risk_map[risk_numeric]
+
+                    st.markdown(f"""
+                        <div style="background-color: #0c2d48; color: #ffffff; padding: 16px; border-radius: 6px;">
+                            ✅ <b>Risk Profile Level:</b> {risk_level}<br>
+                            🔢 <b>Avg Claims:</b> {avg_claims:.2f}<br>
+                            🚗 <b>Capacity:</b> {avg_capacity:.2f}
+                        </div>
+                    """, unsafe_allow_html=True)
 
                     cur.execute("""
                         INSERT INTO vehicle_risk
@@ -157,8 +166,7 @@ def run_app():
             if st.button("Calculate Premium"):
                 current_year = datetime.now().year
 
-                if model_year == current_year + 1:
-                    # 2025: Use last year
+                if model_year == (current_year + 1):  # If 2025
                     cur.execute("""
                         SELECT suminsured, netpremium
                         FROM vehicle_inspection
@@ -173,15 +181,15 @@ def run_app():
                         WHERE upper(make_name) = %s AND upper(sub_make_name) = %s
                         AND model_year = %s
                         ORDER BY id DESC LIMIT 1
-                    """, (make_name.upper(), sub_make_name.upper(), model_year))
+                    """, (make_name.upper(), sub_make_name.upper(), model_year - 1))
 
                 row = cur.fetchone()
-                if row:
+                if row and all(v is not None for v in row):
                     suminsured, netpremium = row
                     features = [[model_year, suminsured, netpremium]]
                     predicted_premium = float(premium_model.predict(features)[0])
 
-                    st.success(f"💰 Predicted Premium: {predicted_premium:.2f}%")
+                    st.success(f"💰 Predicted Premium: {predicted_premium:.2f}")
 
                     cur.execute("""
                         UPDATE vehicle_risk
@@ -194,3 +202,11 @@ def run_app():
 
 if __name__ == "__main__":
     run_app()
+
+
+ # ✅ ---- Render correct page ----
+   
+    if st.session_state['active_page'] == "Dashboard":
+        dashboard.show_dashboard()
+    elif st.session_state['active_page'] == "Question Answer":
+        qa.show_question_answer()
