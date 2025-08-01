@@ -5,13 +5,131 @@ from datetime import datetime
 import joblib
 import qa
 import dashboard
+from PyPDF2 import PdfReader
+
+
+# ✅ ---- Inject custom CSS ----
+st.markdown("""
+<style>
+.st-emotion-cache-umot6g {
+    display: inline-flex;
+    -webkit-box-align: center;
+    align-items: center;
+    -webkit-box-pack: center;
+    justify-content: center;
+    font-weight: 400;
+    padding: 12px 16px;
+    border-radius: 0.5rem;
+    min-height: 2.5rem;
+    margin: 0px 0px 0.5rem 0px;
+    line-height: 1.6;
+    text-transform: none;
+    font-size: inherit;
+    font-family: inherit;
+    color: inherit;
+    width: 100%;
+    cursor: pointer;
+    user-select: none;
+    background-color: rgb(43, 44, 54);
+    border: 1px solid rgba(250, 250, 250, 0.2);
+}
+
+.st-emotion-cache-umot6g:hover {
+    border-color: #14C76D;
+    color: #14C76D;
+}
+.st-emotion-cache-umot6g:active {
+    color: #14C76D;
+    border-color: #14C76D;
+    background-color: transparent;
+}
+.st-emotion-cache-z8vbw2 {
+    display: inline-flex;
+    -webkit-box-align: center;
+    align-items: center;
+    -webkit-box-pack: center;
+    justify-content: center;
+    font-weight: 400;
+    padding: 12px 16px;
+    border-radius: 0.5rem;
+    min-height: 2.5rem;
+    margin: 0px;
+    line-height: 1.6;
+    text-transform: none;
+    font-size: inherit;
+    font-family: inherit;
+    color: inherit;
+    width: auto;
+    cursor: pointer;
+    user-select: none;
+    background-color: rgb(19, 23, 32);
+    border: 1px solid rgba(250, 250, 250, 0.2);
+}
+.st-emotion-cache-z8vbw2:hover {
+    border-color: #14C76D;
+    color: #14C76D;
+}
+.st-emotion-cache-z8vbw2:active{
+border-color:#14C76D !important;
+color:#14C76D !important;
+background:transparent;
+}
+.st-emotion-cache-z8vbw2:focus:not(:active){
+border-color:#14C76D !important;
+color:#14C76D !important;
+background:transparent;
+}
+.st-emotion-cache-umot6g:focus:not(:active){
+border-color:#14C76D !important;
+color:#14C76D !important;
+background:transparent;
+}
+.st-cc{
+border-bottom-color: #14C79D !important;   
+}
+.st-cb{
+border-top-color:#14C79D !important;    
+} 
+.st-ca{
+border-right-color:#14C79D !important;
+} 
+.st-c9{
+border-left-color:#14C79D !important;
+}
+.st-dd{
+    height:3rem;
+    }
+.st-emotion-cache-9gx57n {
+    display: flex;
+    flex-flow: row;
+    -webkit-box-align: center;
+    align-items: center;
+    height: 3rem;
+    border-width: 1px;
+    border-style: solid;
+    border-color: #14C79D;
+    transition-duration: 200ms;
+    transition-property: border;
+    transition-timing-function: cubic-bezier(0.2, 0.8, 0.4, 1);
+    border-radius: 0.5rem;
+    overflow: hidden;
+}
+.st-emotion-cache-9gx57n.focused {
+    border-color: #14C79D !important; 
+}
+.st-d1 {
+    line-height: 1.96;
+}
+</style>
+""", unsafe_allow_html=True)
+
 
 # ✅ Load ML Models
 risk_model = joblib.load("risk_model.pkl")
 premium_model = joblib.load("premium_model.pkl")
 
 def run_app():
-    st.title("📋 Underwriter System (ML Powered)")
+    st.title("📋Underwriter System (ML Powered)")
 
     # ---- DB CONNECTION ----
     conn = psycopg2.connect(
@@ -31,6 +149,7 @@ def run_app():
         st.session_state['active_page'] = "Upload File"
 
     # ---- Sidebar ----
+    st.sidebar.title("📋 Navigation")
     if st.sidebar.button("Upload File"):
         st.session_state['active_page'] = "Upload File"
     if st.sidebar.button("Risk Profile"):
@@ -48,36 +167,47 @@ def run_app():
     if st.session_state['active_page'] == "Upload File":
         st.subheader("Upload Vehicle Data")
 
-        uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
+        file_type = st.radio("Select file type", ["Excel (.xlsx)", "PDF (.pdf)"])
+        uploaded_file = st.file_uploader("Choose file", type=['xlsx', 'pdf'])
 
         if uploaded_file is not None:
-            df = pd.read_excel(uploaded_file)
-            st.write(df)
+            if file_type == "Excel (.xlsx)":
+                df = pd.read_excel(uploaded_file)
+                st.write(df)
 
-            if st.button("Save to DB"):
-                for _, row in df.iterrows():
-                    cur.execute("""
-                        INSERT INTO vehicle_inspection
-                        (user_id, client_name, model_year, make_name, sub_make_name,
-                        tracker_id, suminsured, clam_amount, grosspremium, netpremium,
-                        no_of_claims, vehicle_capacity)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    """, (
-                        st.session_state['user_id'],
-                        row['CLIENT_NAME'],
-                        row['MODEL_YEAR'],
-                        row['MAKE_NAME'],
-                        row['SUB_MAKE_NAME'],
-                        row['TRACKER_ID'],
-                        row['SUMINSURED'],
-                        row['CLM_AMOUNT'],
-                        row['GROSSPREMIUM'],
-                        row['NETPREMIUM'],
-                        row['NO_OF_CLAIMS'],
-                        row['VEHICLE_CAPACITY']
-                    ))
-                conn.commit()
-                st.success("✅ Data saved!")
+                if st.button("Save Excel to DB", key="save_excel"):
+                    for _, row in df.iterrows():
+                        cur.execute("""
+                            INSERT INTO vehicle_inspection 
+                            (user_id, client_name, model_year, make_name, sub_make_name, tracker_id, suminsured, clam_amount, grosspremium, netpremium, no_of_claims, vehicle_capacity)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        """, (
+                            st.session_state['user_id'],
+                            row['CLIENT_NAME'],
+                            row['MODEL_YEAR'],
+                            row['MAKE_NAME'],
+                            row['SUB_MAKE_NAME'],
+                            row['TRACKER_ID'],
+                            row['SUMINSURED'],
+                            row['CLM_AMOUNT'],
+                            row['GROSSPREMIUM'],
+                            row['NETPREMIUM'],
+                            row['NO_OF_CLAIMS'],
+                            row['VEHICLE_CAPACITY']
+                        ))
+                    conn.commit()
+                    st.success("✅ Excel data inserted into vehicle_inspection!")
+
+            elif file_type == "PDF (.pdf)":
+                pdf = PdfReader(uploaded_file)
+                text = ""
+                for page in pdf.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+
+                st.session_state['pdf_context'] = text
+                st.success("✅ PDF uploaded and context saved for Q&A!")
 
     # ================================
     # 🚩 Risk Profile Page
